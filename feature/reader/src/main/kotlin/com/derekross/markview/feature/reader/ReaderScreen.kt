@@ -92,6 +92,7 @@ import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -329,7 +330,7 @@ fun ReaderScreen(
                     onAppearance = { showAppearance = true },
                     onShare = { context.shareDocument(source, s.title, s.rawText) },
                     onScrollTop = { scope.launch { listState.animateScrollToItem(0) } },
-                    modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
+                    bottomInset = padding.calculateBottomPadding(),
                 )
             }
         }
@@ -423,14 +424,17 @@ private fun ReaderToolbar(
     onAppearance: () -> Unit,
     onShare: () -> Unit,
     onScrollTop: () -> Unit,
-    modifier: Modifier = Modifier,
+    bottomInset: Dp,
 ) {
-    Box(Modifier.fillMaxSize().then(modifier), contentAlignment = Alignment.BottomCenter) {
+    // The exit-always behavior hides the toolbar by the distance from its top to the bottom of its
+    // parent. Keep the parent full-screen and lift the toolbar above the navigation bar with an
+    // offset (not parent padding) so that distance includes the inset and it fully leaves the screen.
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         HorizontalFloatingToolbar(
             expanded = true,
             scrollBehavior = scrollBehavior,
             colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(),
-            modifier = Modifier.offset(y = -FloatingToolbarDefaults.ScreenOffset),
+            modifier = Modifier.offset(y = -(FloatingToolbarDefaults.ScreenOffset + bottomInset)),
         ) {
             IconButton(onClick = onToc) { Icon(Icons.AutoMirrored.Outlined.FormatListBulleted, contentDescription = "Table of contents") }
             IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, contentDescription = "Find in document") }

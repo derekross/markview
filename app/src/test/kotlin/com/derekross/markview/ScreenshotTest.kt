@@ -5,6 +5,9 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
+import kotlin.test.assertTrue
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -82,6 +85,16 @@ class ScreenshotTest {
     fun readerAppearancePanel() = reader(AppTheme.Light, ReaderTypeface.Editorial, name = "reader_appearance") {
         compose.onNodeWithContentDescription("Reading appearance").performClick()
         compose.waitForIdle()
+    }
+
+    @Test
+    fun toolbarFullyHidesWhileScrollingDown() = reader(AppTheme.Dark, ReaderTypeface.Editorial, name = "reader_toolbar_hidden") {
+        compose.onNode(hasScrollAction()).performTouchInput { swipeUp(startY = bottom * 0.8f, endY = top + bottom * 0.2f) }
+        compose.waitForIdle()
+        // Bounds in root are clipped to the screen, so compare the unclipped position instead.
+        val screenHeight = compose.onRoot().fetchSemanticsNode().size.height
+        val toolbarTop = compose.onNodeWithContentDescription("Table of contents").fetchSemanticsNode().positionInRoot.y
+        assertTrue(toolbarTop >= screenHeight, "toolbar still visible: top=$toolbarTop screen=$screenHeight")
     }
 
     @Test
