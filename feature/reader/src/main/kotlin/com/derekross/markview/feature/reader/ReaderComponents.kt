@@ -107,7 +107,13 @@ internal fun TableOfContents(
     val minLevel = headings.minOfOrNull { it.level } ?: 1
     val listState = rememberLazyListState()
     val currentIndex = headings.indexOf(currentHeading)
-    LaunchedEffect(Unit) { if (currentIndex > 3) listState.scrollToItem(currentIndex - 2) }
+    // Keep the current section in view (matters for the persistent tablet panel).
+    LaunchedEffect(currentIndex) {
+        if (currentIndex < 0) return@LaunchedEffect
+        val visible = listState.layoutInfo.visibleItemsInfo
+        val shown = visible.size > 2 && currentIndex in (visible.first().index + 1)..(visible.last().index - 1)
+        if (!shown) listState.animateScrollToItem((currentIndex - 2).coerceAtLeast(0))
+    }
     Column(modifier) {
         Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.Bottom) {
             Text("Contents", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))

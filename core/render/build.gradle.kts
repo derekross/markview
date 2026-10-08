@@ -28,4 +28,6 @@ dependencies {
     implementation(libs.coil.svg)
     implementation(libs.coil.network.okhttp)
     implementation(libs.highlights)
+    implementation(libs.androidsvg)
+    implementation(libs.androidx.webkit)
 }

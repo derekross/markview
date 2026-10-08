@@ -73,6 +73,8 @@ class ReaderViewModel(application: Application, val source: DocumentSource) : An
         .map { it.entry(source.key)?.favorite == true }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val readAloud = ReadAloudController(application)
+
     private var lastModified: Long? = null
     private var watchJob: Job? = null
 
@@ -99,6 +101,7 @@ class ReaderViewModel(application: Application, val source: DocumentSource) : An
                 )
             }.onSuccess {
                 _state.value = it
+                readAloud.setDocument(it.document)
                 startWatching()
             }.onFailure { error ->
                 _state.value = ReaderUiState.Error(
@@ -137,6 +140,7 @@ class ReaderViewModel(application: Application, val source: DocumentSource) : An
             if (loaded.text == current.rawText) return
             val document = withContext(Dispatchers.Default) { parser.parse(loaded.text) }
             _state.value = current.copy(document = document, rawText = loaded.text, restore = null, revision = current.revision + 1)
+            readAloud.setDocument(document)
             if (_search.value.active) setQuery(_search.value.query)
         }
     }
@@ -152,6 +156,10 @@ class ReaderViewModel(application: Application, val source: DocumentSource) : An
 
     fun updateSettings(settings: ReaderSettings) {
         viewModelScope.launch { container.settings.update { settings } }
+    }
+
+    override fun onCleared() {
+        readAloud.shutdown()
     }
 
     // region Find in document

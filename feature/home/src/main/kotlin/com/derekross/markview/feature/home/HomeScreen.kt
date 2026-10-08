@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -246,9 +247,10 @@ private fun LibraryContent(
 ) {
     val inProgress = recents.filter { it.progress in 0.02f..0.97f }.take(10)
     val favorites = recents.filter { it.favorite }
+    // On tablets and unfolded foldables, keep lists at a readable width in the middle of the screen.
     LazyColumn(
         contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 120.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().wrapContentWidth().widthIn(max = 840.dp),
     ) {
         if (inProgress.isNotEmpty()) {
             item(key = "continue-header") { SectionHeader("Continue reading") }

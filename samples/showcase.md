@@ -35,9 +35,9 @@ Paragraphs flow with real line-breaking and hyphen-free justification. You get *
 
 - [x] Tables, task lists, footnotes
 - [x] Syntax highlighting
-- [ ] Mermaid diagrams (coming in phase 2)
+- [x] Mermaid diagrams and typeset math
   - Rendered offline
-  - Pinch to zoom
+  - Tap a diagram to zoom
 
 ## Code
 
@@ -64,11 +64,24 @@ fun greet(name: String): String {
 
 ## Math
 
-Inline math like $e^{i\pi} + 1 = 0$ is recognised, and so are display blocks:
+Inline math like $e^{i\pi} + 1 = 0$ sits on the baseline, even with fractions such as $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$. Display equations are centred:
 
 $$
 \int_0^1 x^2 \, dx = \frac{1}{3}
 $$
+
+## Diagrams
+
+```mermaid
+flowchart LR
+  A[Open a file] --> B{Markdown?}
+  B -->|yes| C[Read beautifully]
+  B -->|no| D[Show plain text]
+```
+
+## Read it to me
+
+Tap the headphones to hear this document read aloud with your phone's own voice. The paragraph being read is highlighted, and the page follows along. Focus mode dims everything except the paragraph you're on.
 
 ---
 

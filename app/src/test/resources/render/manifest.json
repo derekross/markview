@@ -1,0 +1,24 @@
+[
+  {
+    "kind": "math-inline",
+    "source": "e^{i\\pi} + 1 = 0",
+    "file": "math_0.svg"
+  },
+  {
+    "kind": "math-inline",
+    "source": "\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}",
+    "file": "math_1.svg"
+  },
+  {
+    "kind": "math-display",
+    "source": "\\int_0^1 x^2 \\, dx = \\frac{1}{3}",
+    "file": "math_2.svg"
+  },
+  {
+    "kind": "mermaid",
+    "source": "flowchart LR\n  A[Open a file] --> B{Markdown?}\n  B -->|yes| C[Read beautifully]\n  B -->|no| D[Show plain text]",
+    "file": "diagram_3.png",
+    "width": 568.52392578125,
+    "height": 162
+  }
+]

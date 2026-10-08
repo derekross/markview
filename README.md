@@ -8,7 +8,10 @@ Most Markdown apps on Android are editors that can also show a preview. Markview
   <img src="docs/screenshots/reader_light_editorial.png" width="200" alt="Reader, light theme" />
   <img src="docs/screenshots/reader_sepia_callouts.png" width="200" alt="Callouts in sepia" />
   <img src="docs/screenshots/reader_dark_code.png" width="200" alt="Code and tables in dark mode" />
-  <img src="docs/screenshots/home_library.png" width="200" alt="Home library" />
+  <img src="docs/screenshots/reader_math.png" width="200" alt="Math and diagrams" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/reader_tablet.png" width="600" alt="Tablet layout with contents panel" />
 </p>
 
 ## Features
@@ -25,6 +28,9 @@ Most Markdown apps on Android are editors that can also show a preview. Markview
 - **Find in document** highlights every match and lets you step through them.
 - **Footnote peek:** tap a footnote number to read it in a sheet without losing your place.
 - **Live reload:** when the file changes on disk (Syncthing, a laptop editor…), the page updates in place.
+- **Focus mode:** dims everything except the paragraph you're reading, hides the system bars, and keeps the screen on.
+- **Read aloud:** uses your phone's offline text-to-speech voice. The current paragraph is highlighted and the page follows along. You can skip back or forward and change the speed (0.8× to 2×).
+- **Tablets and foldables:** a persistent contents panel sits beside the text and can be toggled from the toolbar.
 - **Images:** pinch-zoom full-screen viewer. SVG badges are supported, and README badge rows wrap like they do on GitHub.
 
 ### Markdown support
@@ -33,7 +39,8 @@ Most Markdown apps on Android are editors that can also show a preview. Markview
 - Footnotes, YAML front matter (shown as a title, summary, author, date, and tag header), and HTML image blocks.
 - Syntax highlighting for 18 languages, with copy and line-wrap toggles.
 - Wide tables and code scroll horizontally inside their own containers.
-- `$inline$` and `$$display$$` math is parsed. Typeset rendering is on the roadmap.
+- **Math:** `$inline$`, `$$display$$` and ```` ```math ```` blocks are typeset offline with MathJax. Formulas are drawn as vector graphics and sit on the text baseline.
+- **Mermaid diagrams:** flowcharts, sequence, class, state, pie, Gantt and more are rendered offline in your theme's colors. Tap a diagram to zoom.
 
 ### Opening documents
 - **Open with / share to Markview** from any file manager, email, or chat app.
@@ -62,11 +69,15 @@ Rendering is fully native Compose rather than a WebView. Each top-level block is
 - Block indices act as stable anchors for the table of contents, search, and saved positions.
 - Theming, selection, and scrolling feel like the rest of Android.
 
+Math and diagrams use a single hidden WebView loaded with bundled MathJax and Mermaid (`core/render/src/main/assets/markview-render`). It has no network access.
+- **Math** comes back as SVG and is drawn natively with AndroidSVG.
+- **Diagrams** come back as PNG images.
+- **Caching:** results are cached in memory and on disk, so a document renders instantly the second time.
+
 See [docs/PLAN.md](docs/PLAN.md) for the product plan and roadmap. Next up are the following:
-- Mermaid and typeset math, rendered offline to SVG
-- Focus mode and read-aloud
 - Quick edit
 - PDF export
+- Background read-aloud with lock-screen controls
 - Nostr long-form (NIP-23) reading and publishing
 
 ## Building

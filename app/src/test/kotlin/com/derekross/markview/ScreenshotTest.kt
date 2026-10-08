@@ -1,7 +1,14 @@
 package com.derekross.markview
 
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.hasScrollAction
+import android.graphics.BitmapFactory
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.onFirst
+import com.derekross.markview.core.render.engine.DiagramImage
+import com.derekross.markview.core.render.engine.RenderEngine
+import org.json.JSONArray
+import org.junit.Before
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
@@ -9,7 +16,6 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import kotlin.test.assertTrue
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -47,7 +53,39 @@ class ScreenshotTest {
 
     private fun shot(name: String) = compose.onRoot().captureRoboImage(File(outDir, "$name.png").path)
 
-    private fun reader(theme: AppTheme, typeface: ReaderTypeface, scrollTo: Int? = null, name: String, after: () -> Unit = {}) {
+    @Before
+    fun seedRenderEngine() {
+        // Robolectric can't run the WebView's JavaScript, so feed the engine output that the real
+        // engine produced in Chromium (see app/src/test/resources/render/manifest.json).
+        RenderEngine.init(app)
+        val loader = javaClass.classLoader!!
+        val manifest = JSONArray(loader.getResource("render/manifest.json").readText())
+        for (i in 0 until manifest.length()) {
+            val entry = manifest.getJSONObject(i)
+            val bytes = loader.getResource("render/" + entry.getString("file")).readBytes()
+            when (val kind = entry.getString("kind")) {
+                "mermaid" -> {
+                    val file = File(app.cacheDir, entry.getString("file")).apply { writeBytes(bytes) }
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    RenderEngine.seedDiagram(
+                        entry.getString("source"),
+                        DiagramImage(bitmap, file, entry.getDouble("width").toFloat(), entry.getDouble("height").toFloat()),
+                    )
+                }
+                else -> RenderEngine.seedMath(entry.getString("source"), kind == "math-display", String(bytes))
+            }
+        }
+    }
+
+    private fun reader(
+        theme: AppTheme,
+        typeface: ReaderTypeface,
+        name: String,
+        scrollTo: String? = null,
+        /** Wide layouts show the contents in a side panel, so there's no sheet to open. */
+        tocPanel: Boolean = false,
+        after: () -> Unit = {},
+    ) {
         runBlocking { app.appContainer.settings.update { it.copy(theme = theme, typeface = typeface, dynamicColor = false) } }
         val source = app.appContainer.documents.putInline("Showcase", showcase)
         compose.setContent {
@@ -57,7 +95,15 @@ class ScreenshotTest {
         }
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Text that feels good")).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
-        scrollTo?.let { compose.onNode(hasScrollAction() and hasText("Text that feels good", substring = true).not()).performScrollToIndex(it) }
+        scrollTo?.let { heading ->
+            // Jump through the table of contents, which puts the heading at the top of the screen.
+            if (!tocPanel) {
+                compose.onNodeWithContentDescription("Table of contents").performClick()
+                compose.waitForIdle()
+            }
+            compose.onAllNodes(hasText(heading) and hasClickAction()).onFirst().performClick()
+            compose.waitForIdle()
+        }
         after()
         compose.waitForIdle()
         shot(name)
@@ -67,13 +113,38 @@ class ScreenshotTest {
     fun readerLightEditorial() = reader(AppTheme.Light, ReaderTypeface.Editorial, name = "reader_light_editorial")
 
     @Test
-    fun readerSepiaEditorialCallouts() = reader(AppTheme.Sepia, ReaderTypeface.Editorial, scrollTo = 6, name = "reader_sepia_callouts")
+    fun readerSepiaEditorialCallouts() = reader(AppTheme.Sepia, ReaderTypeface.Editorial, scrollTo = "Callouts", name = "reader_sepia_callouts")
 
     @Test
-    fun readerDarkTechnicalCode() = reader(AppTheme.Dark, ReaderTypeface.Technical, scrollTo = 14, name = "reader_dark_code")
+    fun readerDarkTechnicalCode() = reader(AppTheme.Dark, ReaderTypeface.Technical, scrollTo = "Code", name = "reader_dark_code")
 
     @Test
-    fun readerBlackModernTable() = reader(AppTheme.Black, ReaderTypeface.Modern, scrollTo = 18, name = "reader_black_table")
+    fun readerBlackModernTable() = reader(AppTheme.Black, ReaderTypeface.Modern, scrollTo = "Tables that scroll", name = "reader_black_table")
+
+    @Test
+    fun readerMath() = reader(AppTheme.Light, ReaderTypeface.Editorial, scrollTo = "Math", name = "reader_math")
+
+    @Test
+    fun readerDiagramDark() = reader(AppTheme.Dark, ReaderTypeface.Modern, scrollTo = "Diagrams", name = "reader_diagram_dark")
+
+    @Test
+    fun readerDiagramLight() = reader(AppTheme.Light, ReaderTypeface.Editorial, scrollTo = "Diagrams", name = "reader_diagram")
+
+    @Test
+    fun readerFocusMode() = reader(AppTheme.Sepia, ReaderTypeface.Editorial, scrollTo = "Lists and tasks", name = "reader_focus") {
+        compose.onNodeWithContentDescription("Focus mode").performClick()
+        compose.waitForIdle()
+    }
+
+    @Test
+    fun readerReadAloud() = reader(AppTheme.Light, ReaderTypeface.Editorial, name = "reader_read_aloud") {
+        compose.onNodeWithContentDescription("Read aloud").performClick()
+        compose.waitForIdle()
+    }
+
+    @Test
+    @Config(qualifiers = "w1280dp-h800dp-mdpi")
+    fun readerTablet() = reader(AppTheme.Light, ReaderTypeface.Editorial, scrollTo = "Callouts", tocPanel = true, name = "reader_tablet")
 
     @Test
     fun readerTableOfContents() = reader(AppTheme.Light, ReaderTypeface.Modern, name = "reader_toc") {
@@ -89,7 +160,7 @@ class ScreenshotTest {
 
     @Test
     fun toolbarFullyHidesWhileScrollingDown() = reader(AppTheme.Dark, ReaderTypeface.Editorial, name = "reader_toolbar_hidden") {
-        compose.onNode(hasScrollAction()).performTouchInput { swipeUp(startY = bottom * 0.8f, endY = top + bottom * 0.2f) }
+        compose.onNodeWithTag("document").performTouchInput { swipeUp(startY = bottom * 0.8f, endY = top + bottom * 0.2f) }
         compose.waitForIdle()
         // Bounds in root are clipped to the screen, so compare the unclipped position instead.
         val screenHeight = compose.onRoot().fetchSemanticsNode().size.height

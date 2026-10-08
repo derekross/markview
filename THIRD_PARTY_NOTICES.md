@@ -18,4 +18,8 @@ Licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.o
 | Jetpack Compose, AndroidX | Apache 2.0 |
 | Coil | Apache 2.0 |
 | Highlights (dev.snipme) | Apache 2.0 |
+| MathJax 3.2.2 (bundled in `core/render/src/main/assets/markview-render`) | Apache 2.0 |
+| Mermaid 11.17.2 (bundled in `core/render/src/main/assets/markview-render`) | MIT |
+| AndroidSVG | Apache 2.0 |
+| AndroidX WebKit | Apache 2.0 |
 | kotlinx.coroutines, kotlinx.serialization | Apache 2.0 |

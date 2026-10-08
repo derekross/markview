@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.toClipEntry
@@ -79,6 +80,8 @@ fun LazyListScope.markdownBlocks(
     document: MdDocument,
     search: SearchHighlight,
     itemModifier: Modifier = Modifier,
+    /** Extra per-block decoration (e.g. focus-mode dimming, read-aloud highlight). */
+    blockModifier: @Composable (index: Int) -> Modifier = { Modifier },
 ) {
     items(
         count = document.blocks.size,
@@ -93,7 +96,9 @@ fun LazyListScope.markdownBlocks(
             block is MdBlock.Heading -> theme.blockSpacing * 1.5f
             else -> theme.blockSpacing
         }
-        MarkdownBlock(block, index, search, itemModifier.padding(top = top))
+        Box(itemModifier.padding(top = top)) {
+            MarkdownBlock(block, index, search, blockModifier(index))
+        }
     }
 }
 
@@ -112,8 +117,9 @@ fun MarkdownBlock(
         is MdBlock.Quote -> QuoteBlock(block, search, modifier)
         is MdBlock.Callout -> CalloutBlock(block, search, modifier)
         is MdBlock.ListBlock -> ListBlockView(block, depth = 0, search = search, modifier = modifier)
-        is MdBlock.CodeBlock -> CodeBlockView(block.code, block.language, search, modifier)
-        is MdBlock.MathBlock -> MathBlockView(block.tex, modifier)
+        is MdBlock.CodeBlock ->
+            if (block.language == "mermaid") MermaidView(block.code, modifier) else CodeBlockView(block.code, block.language, search, modifier)
+        is MdBlock.MathBlock -> DisplayMathView(block.tex, modifier)
         is MdBlock.Table -> TableBlock(block, search, modifier)
         is MdBlock.Image -> Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             MarkdownImage(block.url, block.alt, block.link)
@@ -145,11 +151,11 @@ fun MarkdownBlock(
 @Composable
 private fun HeadingBlock(block: MdBlock.Heading, blockIndex: Int, search: SearchHighlight, modifier: Modifier) {
     val theme = LocalMarkdownTheme.current
-    val callbacks = LocalMarkdownCallbacks.current
-    val text = remember(block, theme, search) { buildInlineText(block.content, theme, callbacks, search, blockIndex) }
-    Text(
-        text = text,
+    MarkdownText(
+        content = block.content,
         style = theme.heading(block.level),
+        blockIndex = blockIndex,
+        search = search,
         modifier = modifier.fillMaxWidth().semantics { heading() },
     )
 }
@@ -158,7 +164,6 @@ private fun HeadingBlock(block: MdBlock.Heading, blockIndex: Int, search: Search
 @Composable
 private fun ParagraphBlock(content: List<MdInline>, blockIndex: Int, search: SearchHighlight, modifier: Modifier) {
     val theme = LocalMarkdownTheme.current
-    val callbacks = LocalMarkdownCallbacks.current
     if (content.isImageRow()) {
         // Badge rows (shields.io etc.) flow and wrap like they do on GitHub.
         FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -172,8 +177,29 @@ private fun ParagraphBlock(content: List<MdInline>, blockIndex: Int, search: Sea
         }
         return
     }
-    val text = remember(content, theme, search) { buildInlineText(content, theme, callbacks, search, blockIndex) }
-    Text(text = text, style = theme.body, modifier = modifier.fillMaxWidth())
+    MarkdownText(content, theme.body, blockIndex, search, modifier.fillMaxWidth())
+}
+
+/** Inline Markdown as text: links, search highlights and typeset inline math. */
+@Composable
+internal fun MarkdownText(
+    content: List<MdInline>,
+    style: androidx.compose.ui.text.TextStyle,
+    blockIndex: Int,
+    search: SearchHighlight,
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign? = null,
+) {
+    val theme = LocalMarkdownTheme.current
+    val callbacks = LocalMarkdownCallbacks.current
+    val math = rememberInlineMath(content)
+    val mathSnapshot = math.toMap()
+    val text = remember(content, theme, search, mathSnapshot) {
+        buildInlineText(content, theme, callbacks, search, blockIndex, mathSnapshot)
+    }
+    val color = style.color.takeOrElse { theme.textColor }
+    val inlineContent = remember(mathSnapshot, color) { inlineMathContent(mathSnapshot, color) }
+    Text(text = text, style = style, inlineContent = inlineContent, textAlign = textAlign ?: TextAlign.Unspecified, modifier = modifier)
 }
 
 private fun List<MdInline>.isImageRow(): Boolean {
@@ -362,28 +388,10 @@ internal fun CodeBlockView(code: String, language: String?, search: SearchHighli
     }
 }
 
-@Composable
-private fun MathBlockView(tex: String, modifier: Modifier) {
-    val theme = LocalMarkdownTheme.current
-    Box(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(theme.codeBlockBackground.copy(alpha = 0.6f))
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            tex,
-            style = theme.code.copy(fontStyle = FontStyle.Italic, color = theme.accentColor),
-            softWrap = false,
-        )
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TableBlock(block: MdBlock.Table, search: SearchHighlight, modifier: Modifier) {
     val theme = LocalMarkdownTheme.current
-    val callbacks = LocalMarkdownCallbacks.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
     val columns = block.header.size
@@ -398,16 +406,17 @@ private fun TableBlock(block: MdBlock.Table, search: SearchHighlight, modifier: 
                 val rows = listOf(block.header) + block.rows
                 rows.forEachIndexed { r, row ->
                     row.forEach { cell ->
-                        val text = remember(cell, theme, search) { buildInlineText(cell.content, theme, callbacks, nestedSearch, -1) }
                         val background = when {
                             r == 0 -> colors.surfaceContainerHigh
                             r % 2 == 0 -> colors.surfaceContainerLow.copy(alpha = 0.6f)
                             else -> Color.Transparent
                         }
                         Box(Modifier.background(background).padding(horizontal = 14.dp, vertical = 10.dp)) {
-                            Text(
-                                text,
+                            MarkdownText(
+                                content = cell.content,
                                 style = if (r == 0) cellStyle.copy(fontWeight = FontWeight.SemiBold) else cellStyle,
+                                blockIndex = -1,
+                                search = nestedSearch,
                                 textAlign = when (cell.alignment) {
                                     CellAlignment.Start -> TextAlign.Start
                                     CellAlignment.Center -> TextAlign.Center

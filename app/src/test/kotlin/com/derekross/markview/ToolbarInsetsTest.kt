@@ -2,7 +2,7 @@ package com.derekross.markview
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -63,7 +63,7 @@ class ToolbarInsetsTest {
         // Sanity check: the inset was applied, so the visible toolbar sits above the navigation bar.
         assertTrue(shownTop + shownNode.size.height <= screenHeight - navBarPx, "toolbar not lifted above nav bar: top=$shownTop")
 
-        compose.onNode(hasScrollAction()).performTouchInput { swipeUp(startY = bottom * 0.8f, endY = top + bottom * 0.2f) }
+        compose.onNodeWithTag("document").performTouchInput { swipeUp(startY = bottom * 0.8f, endY = top + bottom * 0.2f) }
         compose.waitForIdle()
         val hiddenTop = compose.onNodeWithContentDescription("Table of contents").fetchSemanticsNode().positionInRoot.y
         assertTrue(hiddenTop >= screenHeight, "toolbar still visible after scrolling: top=$hiddenTop screen=$screenHeight")

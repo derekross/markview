@@ -1,6 +1,43 @@
 package com.derekross.markview.feature.reader
 
 import android.app.Application
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.outlined.CenterFocusStrong
+import androidx.compose.material.icons.outlined.CenterFocusWeak
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingToolbarScrollBehavior
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.derekross.markview.core.render.engine.RenderEngineHost
 import android.content.ClipData
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -35,7 +72,7 @@ import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
@@ -131,12 +168,16 @@ fun ReaderScreen(
     val search by viewModel.search.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val favorite by viewModel.favorite.collectAsStateWithLifecycle()
+    val speech by viewModel.readAloud.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val listState = rememberLazyListState()
 
     var showToc by rememberSaveable { mutableStateOf(false) }
+    var focusMode by rememberSaveable { mutableStateOf(false) }
+    /** On wide screens the contents live in a side panel that can be toggled. */
+    var tocPanel by rememberSaveable { mutableStateOf(true) }
     var showAppearance by rememberSaveable { mutableStateOf(false) }
     var footnote by rememberSaveable { mutableStateOf<String?>(null) }
     var image by remember { mutableStateOf<Pair<Any, String>?>(null) }
@@ -144,12 +185,17 @@ fun ReaderScreen(
     val ready = state as? ReaderUiState.Ready
     val document = ready?.document ?: MdDocument.Empty
 
-    // Keep the screen awake while reading, if the user asked for it.
+    // Keep the screen awake while reading if asked, and always in focus mode or while reading aloud.
     val view = LocalView.current
-    DisposableEffect(settings.keepScreenOn) {
-        view.keepScreenOn = settings.keepScreenOn
+    val keepOn = settings.keepScreenOn || focusMode || speech.active
+    DisposableEffect(keepOn) {
+        view.keepScreenOn = keepOn
         onDispose { view.keepScreenOn = false }
     }
+    ImmersiveMode(enabled = focusMode)
+
+    BackHandler(enabled = focusMode) { focusMode = false }
+    BackHandler(enabled = search.active && !focusMode) { viewModel.closeSearch() }
 
     fun scrollToBlock(blockIndex: Int) {
         scope.launch { listState.animateScrollToItem(HEADER_ITEMS + blockIndex) }
@@ -187,6 +233,55 @@ fun ReaderScreen(
     val progress by remember(listState) { derivedStateOf { listState.readingProgress() } }
     val showScrollTop by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 4 } }
 
+    /** The block under the reading line (40% down the viewport); dimmed focus mode keeps it lit. */
+    val focusedBlock by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val line = info.viewportStartOffset + (info.viewportEndOffset - info.viewportStartOffset) * 0.4f
+            info.visibleItemsInfo
+                .firstOrNull { it.offset <= line && it.offset + it.size > line && (it.key as? String)?.startsWith("block-") == true }
+                ?.let { it.index - HEADER_ITEMS } ?: -1
+        }
+    }
+
+    // Read aloud: keep the spoken block comfortably in view.
+    LaunchedEffect(speech.blockIndex, speech.status) {
+        if (speech.status != ReadAloudState.Status.Playing || speech.blockIndex < 0) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == HEADER_ITEMS + speech.blockIndex }
+        val viewport = info.viewportEndOffset - info.viewportStartOffset
+        val comfortable = item != null && item.offset >= info.viewportStartOffset + viewport * 0.1f &&
+            item.offset + minOf(item.size, viewport / 2) <= info.viewportStartOffset + viewport * 0.75f
+        if (!comfortable) listState.animateScrollToItem(HEADER_ITEMS + speech.blockIndex, -(viewport * 0.2f).toInt())
+    }
+    LaunchedEffect(speech.error) {
+        speech.error?.let {
+            viewModel.readAloud.clearError()
+            snackbar.showSnackbar(it)
+        }
+    }
+
+    val highlightColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    val blockModifier: @Composable (Int) -> Modifier = { index ->
+        val dim = focusMode && focusedBlock >= 0 && index != focusedBlock
+        val alpha by animateFloatAsState(if (dim) 0.16f else 1f, label = "focus")
+        val reading = speech.active && index == speech.blockIndex
+        val highlight by animateColorAsState(if (reading) highlightColor else highlightColor.copy(alpha = 0f), label = "speech")
+        Modifier
+            .graphicsLayer { this.alpha = alpha }
+            .drawBehind {
+                if (highlight.alpha > 0f) {
+                    val inset = 10.dp.toPx()
+                    drawRoundRect(
+                        color = highlight,
+                        topLeft = Offset(-inset, -inset / 2),
+                        size = Size(size.width + inset * 2, size.height + inset),
+                        cornerRadius = CornerRadius(14.dp.toPx()),
+                    )
+                }
+            }
+    }
+
     // Persist position (debounced) as the user scrolls.
     @OptIn(FlowPreview::class)
     LaunchedEffect(listState, ready != null) {
@@ -218,7 +313,7 @@ fun ReaderScreen(
     Scaffold(
         modifier = Modifier.nestedScroll(topBarScroll.nestedScrollConnection).nestedScroll(toolbarScroll),
         topBar = {
-            AnimatedContent(search.active, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "topbar") { searching ->
+            if (!focusMode) AnimatedContent(search.active, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "topbar") { searching ->
                 if (searching) {
                     FindBar(
                         state = search,
@@ -260,6 +355,7 @@ fun ReaderScreen(
                                 if (ready != null) {
                                     OverflowMenu(
                                         source = source,
+                                        onShare = { context.shareDocument(source, ready.title, ready.rawText) },
                                         onCopy = {
                                             scope.launch {
                                                 clipboard.setClipEntry(ClipData.newPlainText(ready.title, ready.rawText).toClipEntry())
@@ -305,33 +401,85 @@ fun ReaderScreen(
             is ReaderUiState.Error -> ErrorState(s.message, onRetry = viewModel::load, onBack = onBack, modifier = Modifier.padding(padding))
             is ReaderUiState.Ready -> {
                 val theme = rememberMarkdownTheme(settings)
-                CompositionLocalProvider(LocalMarkdownTheme provides theme, LocalMarkdownCallbacks provides callbacks) {
-                    val highlight = remember(search) {
-                        if (!search.active || search.query.isBlank()) {
-                            SearchHighlight.None
-                        } else {
-                            SearchHighlight(search.query, search.currentMatch?.blockIndex ?: -1, search.currentMatch?.occurrence ?: -1)
+                RenderEngineHost()
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val wide = maxWidth >= 840.dp && s.document.headings.isNotEmpty()
+                    Row(Modifier.fillMaxSize()) {
+                        AnimatedVisibility(
+                            visible = wide && tocPanel && !focusMode,
+                            enter = expandHorizontally() + fadeIn(),
+                            exit = shrinkHorizontally() + fadeOut(),
+                        ) {
+                            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp).fillMaxHeight()) {
+                                TableOfContents(
+                                    document = s.document,
+                                    currentHeading = currentHeading,
+                                    onSelect = { scrollToBlock(it.blockIndex) },
+                                    modifier = Modifier.padding(top = padding.calculateTopPadding() + 16.dp, bottom = padding.calculateBottomPadding()),
+                                )
+                            }
+                        }
+                        CompositionLocalProvider(LocalMarkdownTheme provides theme, LocalMarkdownCallbacks provides callbacks) {
+                            val highlight = remember(search) {
+                                if (!search.active || search.query.isBlank()) {
+                                    SearchHighlight.None
+                                } else {
+                                    SearchHighlight(search.query, search.currentMatch?.blockIndex ?: -1, search.currentMatch?.occurrence ?: -1)
+                                }
+                            }
+                            DocumentBody(
+                                document = s.document,
+                                fallbackTitle = s.title,
+                                listState = listState,
+                                highlight = highlight,
+                                maxWidth = settings.maxContentWidth,
+                                padding = padding,
+                                blockModifier = blockModifier,
+                                modifier = Modifier.weight(1f),
+                            )
                         }
                     }
-                    DocumentBody(
-                        document = s.document,
-                        fallbackTitle = s.title,
-                        listState = listState,
-                        highlight = highlight,
-                        maxWidth = settings.maxContentWidth,
-                        padding = padding,
-                    )
+                    val firstVisibleBlock = { (listState.firstVisibleItemIndex - HEADER_ITEMS).coerceAtLeast(0) }
+                    AnimatedContent(
+                        targetState = when {
+                            focusMode -> BottomChrome.None
+                            speech.active -> BottomChrome.Player
+                            else -> BottomChrome.Toolbar
+                        },
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "bottomChrome",
+                        // Center the toolbar over the reading column, not the whole screen.
+                        modifier = Modifier.fillMaxSize().padding(start = if (wide && tocPanel && !focusMode) 320.dp else 0.dp),
+                    ) { chrome ->
+                        when (chrome) {
+                            BottomChrome.Toolbar -> ReaderToolbar(
+                                scrollBehavior = toolbarScroll,
+                                showScrollTop = showScrollTop,
+                                tocActive = wide && tocPanel,
+                                onToc = { if (wide) tocPanel = !tocPanel else showToc = true },
+                                onSearch = viewModel::openSearch,
+                                onAppearance = { showAppearance = true },
+                                onReadAloud = { viewModel.readAloud.play(firstVisibleBlock()) },
+                                onFocus = {
+                                    viewModel.closeSearch()
+                                    focusMode = true
+                                },
+                                onScrollTop = { scope.launch { listState.animateScrollToItem(0) } },
+                                bottomInset = padding.calculateBottomPadding(),
+                            )
+                            BottomChrome.Player -> ReadAloudBar(
+                                state = speech,
+                                onTogglePause = viewModel.readAloud::togglePause,
+                                onSkip = viewModel.readAloud::skip,
+                                onRate = viewModel.readAloud::setRate,
+                                onStop = viewModel.readAloud::stop,
+                                bottomInset = padding.calculateBottomPadding(),
+                            )
+                            BottomChrome.None -> Box(Modifier.fillMaxSize())
+                        }
+                    }
+                    if (focusMode) FocusExitButton(onExit = { focusMode = false })
                 }
-                ReaderToolbar(
-                    scrollBehavior = toolbarScroll,
-                    showScrollTop = showScrollTop,
-                    onToc = { showToc = true },
-                    onSearch = viewModel::openSearch,
-                    onAppearance = { showAppearance = true },
-                    onShare = { context.shareDocument(source, s.title, s.rawText) },
-                    onScrollTop = { scope.launch { listState.animateScrollToItem(0) } },
-                    bottomInset = padding.calculateBottomPadding(),
-                )
             }
         }
     }
@@ -388,17 +536,19 @@ private fun DocumentBody(
     highlight: SearchHighlight,
     maxWidth: Int,
     padding: PaddingValues,
+    blockModifier: @Composable (Int) -> Modifier,
+    modifier: Modifier = Modifier,
 ) {
     val itemModifier = Modifier.widthIn(max = maxWidth.dp).fillMaxWidth().padding(horizontal = 22.dp)
-    SelectionContainer {
+    SelectionContainer(modifier) {
         LazyColumn(
             state = listState,
             horizontalAlignment = Alignment.CenterHorizontally,
             contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 120.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("document"),
         ) {
             item(key = "header") { DocumentHeader(document, fallbackTitle, itemModifier) }
-            markdownBlocks(document, highlight, itemModifier)
+            markdownBlocks(document, highlight, itemModifier, blockModifier)
             if (document.footnotes.isNotEmpty()) {
                 item(key = "footnotes") { FootnotesSection(document, itemModifier.padding(top = 40.dp)) }
             }
@@ -414,15 +564,19 @@ private fun EndOfDocument(modifier: Modifier) {
     }
 }
 
+private enum class BottomChrome { Toolbar, Player, None }
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ReaderToolbar(
-    scrollBehavior: androidx.compose.material3.FloatingToolbarScrollBehavior,
+    scrollBehavior: FloatingToolbarScrollBehavior,
     showScrollTop: Boolean,
+    tocActive: Boolean,
     onToc: () -> Unit,
     onSearch: () -> Unit,
     onAppearance: () -> Unit,
-    onShare: () -> Unit,
+    onReadAloud: () -> Unit,
+    onFocus: () -> Unit,
     onScrollTop: () -> Unit,
     bottomInset: Dp,
 ) {
@@ -436,10 +590,13 @@ private fun ReaderToolbar(
             colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(),
             modifier = Modifier.offset(y = -(FloatingToolbarDefaults.ScreenOffset + bottomInset)),
         ) {
-            IconButton(onClick = onToc) { Icon(Icons.AutoMirrored.Outlined.FormatListBulleted, contentDescription = "Table of contents") }
+            IconToggleButton(checked = tocActive, onCheckedChange = { onToc() }) {
+                Icon(Icons.AutoMirrored.Outlined.FormatListBulleted, contentDescription = "Table of contents")
+            }
             IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, contentDescription = "Find in document") }
             IconButton(onClick = onAppearance) { Icon(Icons.Outlined.FormatSize, contentDescription = "Reading appearance") }
-            IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Share") }
+            IconButton(onClick = onReadAloud) { Icon(Icons.Outlined.Headphones, contentDescription = "Read aloud") }
+            IconButton(onClick = onFocus) { Icon(Icons.Outlined.CenterFocusStrong, contentDescription = "Focus mode") }
             if (showScrollTop) {
                 IconButton(onClick = onScrollTop) { Icon(Icons.Outlined.VerticalAlignTop, contentDescription = "Back to top") }
             }
@@ -447,9 +604,85 @@ private fun ReaderToolbar(
     }
 }
 
+/** Playback controls shown in place of the toolbar while reading aloud. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ReadAloudBar(
+    state: ReadAloudState,
+    onTogglePause: () -> Unit,
+    onSkip: (forward: Boolean) -> Unit,
+    onRate: (Float) -> Unit,
+    onStop: () -> Unit,
+    bottomInset: Dp,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        HorizontalFloatingToolbar(
+            expanded = true,
+            colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(),
+            modifier = Modifier.offset(y = -(FloatingToolbarDefaults.ScreenOffset + bottomInset)),
+        ) {
+            IconButton(onClick = onStop) { Icon(Icons.Outlined.Close, contentDescription = "Stop reading aloud") }
+            IconButton(onClick = { onSkip(false) }) { Icon(Icons.Outlined.SkipPrevious, contentDescription = "Previous paragraph") }
+            FilledIconButton(onClick = onTogglePause, modifier = Modifier.size(52.dp)) {
+                when (state.status) {
+                    ReadAloudState.Status.Starting -> LoadingIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    ReadAloudState.Status.Paused -> Icon(Icons.Outlined.PlayArrow, contentDescription = "Resume")
+                    else -> Icon(Icons.Outlined.Pause, contentDescription = "Pause")
+                }
+            }
+            IconButton(onClick = { onSkip(true) }) { Icon(Icons.Outlined.SkipNext, contentDescription = "Next paragraph") }
+            TextButton(
+                onClick = {
+                    val rates = ReadAloudController.Rates
+                    val next = rates[(rates.indexOfFirst { it >= state.rate - 0.01f }.coerceAtLeast(0) + 1) % rates.size]
+                    onRate(next)
+                },
+                modifier = Modifier.semantics { contentDescription = "Reading speed ${formatRate(state.rate)}" },
+            ) {
+                Text(formatRate(state.rate), style = MaterialTheme.typography.labelLarge, color = LocalContentColor.current)
+            }
+        }
+    }
+}
+
+private fun formatRate(rate: Float): String =
+    (if (rate % 1f == 0f) "%.0f".format(rate) else "%s".format(rate.toString().trimEnd('0'))) + "×"
+
+/** Small, translucent exit affordance shown in focus mode (back also exits). */
+@Composable
+private fun FocusExitButton(onExit: () -> Unit) {
+    Box(Modifier.fillMaxSize().statusBarsPadding().padding(12.dp), contentAlignment = Alignment.TopEnd) {
+        FilledTonalButton(
+            onClick = onExit,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+            ),
+        ) {
+            Icon(Icons.Outlined.CenterFocusWeak, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Exit focus")
+        }
+    }
+}
+
+/** Hides the system bars while [enabled] (swipe from an edge to reveal them temporarily). */
+@Composable
+private fun ImmersiveMode(enabled: Boolean) {
+    val activity = LocalActivity.current ?: return
+    DisposableEffect(enabled) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (enabled) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { if (enabled) controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+}
+
 @Composable
 private fun OverflowMenu(
     source: DocumentSource,
+    onShare: () -> Unit,
     onCopy: () -> Unit,
     onOpenWith: () -> Unit,
     onOpenInBrowser: () -> Unit,
@@ -460,6 +693,11 @@ private fun OverflowMenu(
         IconButton(onClick = { open = true }) { Icon(Icons.Outlined.MoreVert, contentDescription = "More options") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
+                text = { Text("Share") },
+                leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+                onClick = { open = false; onShare() },
+            )
+            DropdownMenuItem(
                 text = { Text("Copy Markdown") },
                 leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
                 onClick = { open = false; onCopy() },
@@ -467,14 +705,14 @@ private fun OverflowMenu(
             if (source is DocumentSource.Local) {
                 DropdownMenuItem(
                     text = { Text("Open with…") },
-                    leadingIcon = { Icon(Icons.Outlined.OpenInNew, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null) },
                     onClick = { open = false; onOpenWith() },
                 )
             }
             if (source is DocumentSource.Remote) {
                 DropdownMenuItem(
                     text = { Text("Open in browser") },
-                    leadingIcon = { Icon(Icons.Outlined.OpenInNew, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null) },
                     onClick = { open = false; onOpenInBrowser() },
                 )
             }

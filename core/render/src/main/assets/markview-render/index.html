@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // MathJax config must exist before the library loads. Inline glyph paths (no <use>/<defs>) so the
+  // SVG can be drawn natively by AndroidSVG.
+  window.MathJax = {
+    startup: { typeset: false },
+    svg: { fontCache: 'none' },
+    tex: { packages: { '[-]': ['noerrors', 'noundefined'] } },
+  };
+</script>
+<script src="tex-svg-full.js"></script>
+<script src="mermaid.min.js"></script>
+<script src="renderer.js"></script>
+</head>
+<body style="margin:0;background:transparent"></body>
+</html>
